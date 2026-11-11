@@ -1,17 +1,17 @@
 #!/bin/sh
-# Cross-build the LomiriNav QML plugin for arm64 in the clickable image.
-# On Windows: wsl sh ./build.sh   Output: LomiriNav/libLomiriNav.so
+# Cross-build the GesturePack QML plugin for arm64 in the clickable image.
+# On Windows: wsl sh ./build.sh   Output: ../GesturePack/libGesturePack.so
 set -eu
 cd "$(dirname "$0")"
-mkdir -p LomiriNav
+mkdir -p out
 docker run --rm -v "$PWD":/src clickable/amd64-ut24.04-1.x-arm64 bash -c '
 set -e
 cd /src
 export PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig
-/usr/lib/qt5/bin/moc navkeys.cpp -o navkeys.moc
-aarch64-linux-gnu-g++ -O2 -fPIC -shared -std=c++17 -Wall navkeys.cpp -o LomiriNav/libLomiriNav.so \
+/usr/lib/qt5/bin/moc gesturepack.cpp -o gesturepack.moc
+aarch64-linux-gnu-g++ -O2 -fPIC -shared -std=c++17 -Wall gesturepack.cpp -o out/libGesturePack.so \
     $(pkg-config --cflags --libs Qt5Qml Qt5Core)
-rm -f navkeys.moc
+rm -f gesturepack.moc
 '
-mkdir -p ../LomiriNav && cp LomiriNav/libLomiriNav.so qmldir ../LomiriNav/ && rm -rf LomiriNav
-ls -l ../LomiriNav
+mkdir -p ../GesturePack && cp out/libGesturePack.so ../GesturePack/ && cp qmldir ../GesturePack/ && rm -rf out
+ls -l ../GesturePack

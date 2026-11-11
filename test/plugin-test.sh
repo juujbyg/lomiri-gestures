@@ -6,10 +6,10 @@
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 U=phablet; UID_=$(id -u $U)
-T=$(mktemp -d /tmp/lomiri-nav-test.XXXXXX)
+T=$(mktemp -d /tmp/gesture-pack-test.XXXXXX)
 trap 'rm -rf "$T"' EXIT
-mkdir -p "$T/imports/LomiriNav"
-cp "$HERE/../LomiriNav/libLomiriNav.so" "$HERE/../LomiriNav/qmldir" "$T/imports/LomiriNav/"
+mkdir -p "$T/imports/GesturePack"
+cp "$HERE/../GesturePack/libGesturePack.so" "$HERE/../GesturePack/qmldir" "$T/imports/GesturePack/"
 cp "$HERE/navtest.qml" "$HERE/keylog.qml" "$T/"
 chmod -R a+rX,go-w "$T"
 
@@ -21,7 +21,7 @@ run_user env MIR_SOCKET=/run/user/$UID_/mir_socket QT_QPA_PLATFORM=ubuntumirclie
 sleep 4
 run_user env QML2_IMPORT_PATH="$T/imports" QT_QPA_PLATFORM=offscreen timeout 10 qmlscene "$T/navtest.qml" > "$T/navtest.out" 2>&1 &
 sleep 2.2
-EV=$(grep -l "lomiri-nav-keys" /sys/class/input/event*/device/name 2>/dev/null | head -1 | sed 's#/device/name##; s#.*/##')
+EV=$(grep -l "gesture-pack-keys" /sys/class/input/event*/device/name 2>/dev/null | head -1 | sed 's#/device/name##; s#.*/##')
 if [ -n "$EV" ]; then
     echo "device: /dev/input/$EV"
     udevadm info /dev/input/$EV | grep -E "ID_INPUT" | sed 's/^/  /'
@@ -29,5 +29,5 @@ else
     echo "device: not found"
 fi
 wait
-echo "--- plugin"; grep -E "NAVTEST|LomiriNav|rror" "$T/navtest.out"
+echo "--- plugin"; grep -E "NAVTEST|GesturePack|rror" "$T/navtest.out"
 echo "--- focused app"; grep -E "KEY|SHORTCUT|rror" "$T/keylog.out"

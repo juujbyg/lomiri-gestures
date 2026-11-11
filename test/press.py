@@ -13,7 +13,7 @@ fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
 fcntl.ioctl(fd, UI_SET_EVBIT, EV_KEY)
 for k in (ALT, LEFT):
     fcntl.ioctl(fd, UI_SET_KEYBIT, k)
-fcntl.ioctl(fd, UI_DEV_SETUP, struct.pack("HHHH80sI", 0x06, 1, 2, 1, b"lomiri-nav-test-keys", 0))
+fcntl.ioctl(fd, UI_DEV_SETUP, struct.pack("HHHH80sI", 0x06, 1, 2, 1, b"gesture-pack-test-keys", 0))
 fcntl.ioctl(fd, UI_DEV_CREATE)
 time.sleep(1.0)
 for i in range(n):

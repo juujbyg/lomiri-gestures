@@ -13,9 +13,9 @@ import sys
 
 
 PATCH = """
-    // LomiriNav: Back (Alt+Left, or a Back key) presses the back action
+    // Gesture Pack: Back (Alt+Left, or a Back key) presses the back action
     // shown in this header. Only a visible header listens, so the top page wins.
-    function __lomiriNavBackAction() {
+    function __gesturePackBackAction() {
         var list = leading.actions;
         for (var i = 0; i < list.length; i++) {
             var a = list[i];
@@ -28,9 +28,9 @@ PATCH = """
     }
     Shortcut {
         sequences: ["Alt+Left", "Back"]   // StandardKey.Back, spelled out: a list keeps only one of its bindings
-        enabled: header.visible && header.enabled && leading.visible && header.__lomiriNavBackAction() !== null
+        enabled: header.visible && header.enabled && leading.visible && header.__gesturePackBackAction() !== null
         onActivated: {
-            var a = header.__lomiriNavBackAction();
+            var a = header.__gesturePackBackAction();
             if (a) a.trigger();
         }
     }
@@ -40,7 +40,7 @@ PATCH = """
 def main(stock, out):
     data = open(stock, "rb").read()
     text = data.decode()
-    if "__lomiriNavBackAction" in text:
+    if "__gesturePackBackAction" in text:
         sys.exit("already patched")
     m = re.search(r"^import QtQuick 2\.(\d+)$", text, re.M)
     if not m:

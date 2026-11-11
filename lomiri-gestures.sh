@@ -1,38 +1,43 @@
 #!/bin/bash
-# Lomiri Nav: floating navigation for Ubuntu Touch - a back button, or a
-# Back/Home/Apps bar, in thumb reach. Choose in System Settings > Gestures.
+# Lomiri Gestures & Shortcuts: floating Back button or Back/Home/Apps bar, three-finger
+# gestures, screenshots, camera and flashlight on the lock screen, and double
+# tap to wake where the phone supports it.
+# Choose what you want in System Settings > Gestures.
 #
-#   sudo ./lomiri-nav.sh on          try it until the next reboot (restarts the shell)
-#   sudo ./lomiri-nav.sh off         back to stock now (restarts the shell)
-#   sudo ./lomiri-nav.sh install     keep it across reboots (restarts the shell)
-#   sudo ./lomiri-nav.sh uninstall   remove everything (restarts the shell)
-#        ./lomiri-nav.sh mode off|button|bar
-#        ./lomiri-nav.sh status
+#   sudo ./lomiri-gestures.sh on          try it until the next reboot (restarts the shell)
+#   sudo ./lomiri-gestures.sh off         back to stock now (restarts the shell)
+#   sudo ./lomiri-gestures.sh install     keep it across reboots (restarts the shell)
+#   sudo ./lomiri-gestures.sh uninstall   remove everything (restarts the shell)
+#        ./lomiri-gestures.sh mode off|button|bar
+#        ./lomiri-gestures.sh status
 #
 # The read-only system is never changed. Each start, the changes are made to
 # copies in /run, from this phone's own files, and mounted over the originals:
-#  - Lomiri's Shell.qml gets a Loader for files/Components/NavOverlay.qml,
+#  - Lomiri's Shell.qml and Stage/Stage.qml: the floating navigation, the
+#    three-finger gestures and screenshots; Greeter/GreeterView.qml: camera and
+#    flashlight on the lock screen,
 #  - the UI toolkit's PageHeader.qml learns the Back shortcut (Alt+Left),
-#  - System Settings > Gestures gets the Navigation choice.
-# A part whose file doesn't look as expected is left out. The LomiriNav QML
+#  - System Settings > Gestures gets the choices.
+# A part whose file doesn't look as expected is left out. The GesturePack QML
 # plugin, which presses the keys, goes to a small root-owned tmpfs in /run
 # (/run itself is noexec). As root, this never writes in the user's home: the
 # settings file is written as the user.
 set -u
 
 HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
-INSTALL_DIR=/root/lomiri-nav
-BOOT_UNIT=/etc/systemd/system/lomiri-nav.service
+INSTALL_DIR=/root/lomiri-gestures
+BOOT_UNIT=/etc/systemd/system/lomiri-gestures.service
+DT2W_UNIT=gesture-pack-dt2w.service
 TARGET=/usr/share/lomiri
-RUN=/run/lomiri-nav
+RUN=/run/gesture-pack
 COPY=$RUN/shell
+LIB=$RUN-lib                      # tmpfs mounted without noexec, for the plugin
 PAGEHEADER=/usr/lib/aarch64-linux-gnu/qt5/qml/Lomiri/Components/1.3/PageHeader.qml
 SETTINGS_PAGE=/usr/share/lomiri-system-settings/qml-plugins/gestures/PageComponent.qml
 USER_NAME=phablet
 USER_HOME=/home/$USER_NAME
 UNIT=lomiri-full-greeter.service
-LIB=$RUN-lib                      # tmpfs mounted without noexec, for the plugin
-SETTINGS_FILE=$USER_HOME/.config/lomiri-nav/settings.conf
+SETTINGS_FILE=$USER_HOME/.config/lomiri-gesture-pack/settings.conf
 DROPIN_DIR=/run/systemd/user/$UNIT.d
 
 uid() { id -u "$USER_NAME"; }
@@ -47,9 +52,16 @@ need_root() {
 }
 
 shell_mounted() { findmnt -n "$TARGET" >/dev/null 2>&1; }
-ours() { [ -f "$COPY/.lomiri-nav" ]; }
+ours() { [ -f "$COPY/.gesture-pack" ]; }
 shell_pid() { as_user systemctl --user show -p MainPID --value "$UNIT"; }
 session_up() { [ -d "/run/user/$(uid)" ] && [ "$(shell_pid)" != 0 ]; }
+
+# Another double-tap service (an older dt2w setup) would fight over the panel.
+other_dt2w() {
+    systemctl list-units --type=service --state=active --no-legend 2>/dev/null |
+        awk '{print $1}' | grep -i dt2w | grep -vx "$DT2W_UNIT" | head -1
+}
+dt2w_ok() { sh "$HERE/addons/dt2w" supported && [ -z "$(other_dt2w)" ]; }
 
 # Restart the shell and wait for the new one. Lomiri can take over a minute to
 # stop on SIGTERM (systemd only kills it after 90 s), so it gets 10 s, then KILL.
@@ -88,16 +100,20 @@ MainView {
 EOF
     chmod -R a+rX "$t"
     runuser -u "$USER_NAME" -- env HOME=$USER_HOME XDG_RUNTIME_DIR="$t" QT_QPA_PLATFORM=offscreen \
-        timeout 20 qmlscene "$t/check.qml" 2>&1 | grep -E "PageHeader\.qml|LomiriNav" | head -3
+        timeout 20 qmlscene "$t/check.qml" 2>&1 | grep -E "PageHeader\.qml" | head -3
     rm -rf "$t"
 }
 
 undo_mounts() {
+    if systemctl is-active --quiet "$DT2W_UNIT"; then
+        systemctl stop "$DT2W_UNIT"
+        sh "$RUN/dt2w" disarm 2>/dev/null
+    fi
     if shell_mounted && ours; then umount "$TARGET" || umount -l "$TARGET"; fi
     for f in "$PAGEHEADER" "$SETTINGS_PAGE"; do
-        if mountpoint -q "$f" && findmnt -n -o SOURCE "$f" | grep -q lomiri-nav; then umount "$f"; fi
+        if mountpoint -q "$f" && findmnt -n -o SOURCE "$f" | grep -q gesture-pack; then umount "$f"; fi
     done
-    rm -f "$DROPIN_DIR/lomiri-nav.conf"; rmdir "$DROPIN_DIR" 2>/dev/null
+    rm -f "$DROPIN_DIR/gesture-pack.conf"; rmdir "$DROPIN_DIR" 2>/dev/null
     rm -rf "$RUN"
     # The running shell may still map the plugin: detach now, freed when it exits.
     if mountpoint -q "$LIB"; then umount "$LIB" 2>/dev/null || umount -l "$LIB"; fi
@@ -109,30 +125,37 @@ undo_mounts() {
 mount_all() {
     if shell_mounted; then
         if ours; then echo "Already on."; return 0; fi
-        echo "Something else (lomiri-gestures?) is mounted over $TARGET; turn it off first." >&2
+        echo "Something else (an older lomiri-gestures or lomiri-nav?) is mounted over $TARGET; turn it off first." >&2
         return 1
     fi
-    [ -f "$HERE/LomiriNav/libLomiriNav.so" ] || { echo "Missing $HERE/LomiriNav/libLomiriNav.so" >&2; return 1; }
+    [ -f "$HERE/GesturePack/libGesturePack.so" ] || { echo "Missing $HERE/GesturePack/libGesturePack.so" >&2; return 1; }
     rm -rf "$RUN"; mkdir -p "$RUN"
 
     # The plugin, on its own root-owned tmpfs, so the shell only loads what
     # root put there. /run is noexec, which would stop the library loading.
     if mountpoint -q "$LIB"; then umount "$LIB" 2>/dev/null || umount -l "$LIB"; fi
     mkdir -p "$LIB"
-    mount -t tmpfs -o mode=0755,size=4m,nosuid,nodev lomiri-nav-lib "$LIB" || { undo_mounts; return 1; }
-    mkdir "$LIB/LomiriNav"
-    cp "$HERE/LomiriNav/libLomiriNav.so" "$HERE/LomiriNav/qmldir" "$LIB/LomiriNav/"
+    mount -t tmpfs -o mode=0755,size=4m,nosuid,nodev gesture-pack-lib "$LIB" || { undo_mounts; return 1; }
+    mkdir "$LIB/GesturePack"
+    cp "$HERE/GesturePack/libGesturePack.so" "$HERE/GesturePack/qmldir" "$LIB/GesturePack/"
     chmod -R a+rX,go-w "$LIB"
     mount -o remount,ro,nosuid,nodev "$LIB" 2>/dev/null
 
     # The shell. Without this part nothing works, so a failure stops here.
     cp -a "$TARGET" "$COPY" || { undo_mounts; return 1; }
-    if ! python3 -I "$HERE/make-shell.py" "$TARGET/Shell.qml" "$COPY/Shell.qml" >/dev/null; then
-        echo "Lomiri's Shell.qml has changed in a way this doesn't know; nothing was changed." >&2
+    if ! python3 -I "$HERE/make-shell.py" "$TARGET/Shell.qml" "$COPY/Shell.qml" >/dev/null ||
+       ! python3 -I "$HERE/make-stage.py" "$TARGET/Stage/Stage.qml" "$COPY/Stage/Stage.qml" >/dev/null; then
+        echo "Lomiri's Shell.qml or Stage.qml has changed in a way this doesn't know; nothing was changed." >&2
         undo_mounts; return 1
     fi
-    cp "$HERE/files/Components/NavOverlay.qml" "$COPY/Components/NavOverlay.qml"
-    echo lomiri-nav > "$COPY/.lomiri-nav"
+    cp "$HERE/files/Components/GesturePackOverlay.qml" "$HERE/files/Components/MultiFingerGestures.qml" \
+        "$HERE/files/Components/GesturePackLockButtons.qml" "$COPY/Components/"
+    # Camera and flashlight on the lock screen: optional, so a mismatch only skips it.
+    if ! python3 -I "$HERE/make-greeter.py" "$TARGET/Greeter/GreeterView.qml" "$COPY/Greeter/GreeterView.qml" >/dev/null; then
+        cp "$TARGET/Greeter/GreeterView.qml" "$COPY/Greeter/GreeterView.qml"
+        echo "The lock screen has changed; camera and flashlight there are left out." >&2
+    fi
+    echo gesture-pack > "$COPY/.gesture-pack"
     chown -R root:root "$COPY"; chmod -R a+rX,go-w "$COPY"
     mount --bind "$COPY" "$TARGET" || { undo_mounts; return 1; }
     mount -o remount,bind,ro "$TARGET" 2>/dev/null
@@ -152,8 +175,22 @@ mount_all() {
         echo "The UI toolkit's PageHeader.qml has changed; Back works only where apps support Alt+Left." >&2
     fi
 
-    # The choice in System Settings > Gestures.
-    if python3 -I "$HERE/make-settings.py" "$SETTINGS_PAGE" "$RUN/settings-page.qml" >/dev/null; then
+    # Double tap to wake, on phones whose touch panel supports it. It runs
+    # from a root-owned copy and follows the user's setting.
+    local dt2w_flag=""
+    if dt2w_ok; then
+        cp "$HERE/addons/dt2w" "$RUN/dt2w"; chmod 644 "$RUN/dt2w"
+        systemctl reset-failed "$DT2W_UNIT" 2>/dev/null
+        if systemd-run --no-block --unit="$DT2W_UNIT" --description="Lomiri Gestures: double tap to wake" \
+               -p Restart=always -p RestartSec=5 /bin/sh "$RUN/dt2w" watch >/dev/null 2>&1; then
+            dt2w_flag=--dt2w
+        fi
+    elif [ -n "$(other_dt2w)" ]; then
+        echo "$(other_dt2w) is already handling double tap to wake, so Lomiri Gestures leaves it alone." >&2
+    fi
+
+    # The choices in System Settings > Gestures.
+    if python3 -I "$HERE/make-settings.py" $dt2w_flag "$SETTINGS_PAGE" "$RUN/settings-page.qml" >/dev/null; then
         chmod 644 "$RUN/settings-page.qml"
         mount --bind "$RUN/settings-page.qml" "$SETTINGS_PAGE"
     else
@@ -163,8 +200,8 @@ mount_all() {
     # Only the shell gets the plugin's import path. /run/systemd/user is in the
     # user manager's search path, root-owned, and gone at reboot.
     mkdir -p "$DROPIN_DIR"
-    printf '[Service]\nEnvironment=QML2_IMPORT_PATH=%s\n' "$LIB" > "$DROPIN_DIR/lomiri-nav.conf"
-    chmod 644 "$DROPIN_DIR/lomiri-nav.conf"
+    printf '[Service]\nEnvironment=QML2_IMPORT_PATH=%s\n' "$LIB" > "$DROPIN_DIR/gesture-pack.conf"
+    chmod 644 "$DROPIN_DIR/gesture-pack.conf"
     return 0
 }
 
@@ -176,7 +213,7 @@ restart_and_check() {
     local pid errors state
     pid=$(shell_pid)
     errors=$(as_user journalctl --user _PID="$pid" --no-pager -o cat 2>/dev/null |
-             grep -E "lomiri/+(Shell\.qml|Components/NavOverlay\.qml)|LomiriNav|navOverlay" |
+             grep -E "lomiri/+(Shell\.qml|Stage/Stage\.qml|Greeter/GreeterView\.qml|Components/(GesturePackOverlay|MultiFingerGestures|GesturePackLockButtons)\.qml)|GesturePack" |
              grep -v "Unable to assign PanelState_QMLTYPE_")
     state=$(as_user systemctl --user is-active "$UNIT")
     if [ "$state" != active ] || [ -n "$errors" ]; then
@@ -196,7 +233,6 @@ write_mode() {
     # sed -i replaces the file, which the shell's plugin notices.
     if grep -q '^mode=' "$f"; then sed -i "s/^mode=.*/mode=$1/" "$f"
     else sed -i "s/^\[General\]$/[General]\nmode=$1/" "$f"; fi
-    sed -i '/^enabled=/d' "$f"
 }
 
 set_mode() {
@@ -215,7 +251,7 @@ on)
     need_root on
     mount_all || exit 1
     restart_and_check || exit 1
-    echo "On until the next reboot. Choose the style in System Settings > Gestures > Navigation."
+    echo "On until the next reboot. Choose what you want in System Settings > Gestures."
     ;;
 off)
     need_root off
@@ -232,34 +268,35 @@ install)
     need_root install
     if [ "$HERE" != "$INSTALL_DIR" ]; then
         rm -rf "$INSTALL_DIR"; mkdir -p "$INSTALL_DIR"
-        cp -r "$HERE/lomiri-nav.sh" "$HERE"/make-*.py "$HERE/LomiriNav" "$HERE/files" "$INSTALL_DIR/"
-        chown -R root:root "$INSTALL_DIR"; chmod -R go-w "$INSTALL_DIR"; chmod 755 "$INSTALL_DIR/lomiri-nav.sh"
+        cp -r "$HERE/lomiri-gestures.sh" "$HERE"/make-*.py "$HERE/GesturePack" "$HERE/files" "$HERE/addons" "$INSTALL_DIR/"
+        chown -R root:root "$INSTALL_DIR"; chmod -R go-w "$INSTALL_DIR"; chmod 755 "$INSTALL_DIR/lomiri-gestures.sh"
     fi
     cat > "$BOOT_UNIT" <<EOF
 [Unit]
-Description=Lomiri Nav: floating navigation for the Lomiri shell
+Description=Lomiri Gestures & Shortcuts for the Lomiri shell
 After=local-fs.target
 Before=lightdm.service
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=$INSTALL_DIR/lomiri-nav.sh mount
+ExecStart=$INSTALL_DIR/lomiri-gestures.sh mount
 ExecStop=/bin/true
 
 [Install]
 WantedBy=multi-user.target
 EOF
     systemctl daemon-reload
-    systemctl enable lomiri-nav.service
+    systemctl enable lomiri-gestures.service
+    # Already on needs no restart: while running, everything is used from /run.
     if ! (shell_mounted && ours); then
-        "$INSTALL_DIR/lomiri-nav.sh" on || { systemctl disable lomiri-nav.service; rm -f "$BOOT_UNIT"; exit 1; }
+        "$INSTALL_DIR/lomiri-gestures.sh" on || { systemctl disable lomiri-gestures.service; rm -f "$BOOT_UNIT"; exit 1; }
     fi
-    echo "Installed: it comes back after every reboot. Remove it with: sudo $INSTALL_DIR/lomiri-nav.sh uninstall"
+    echo "Installed: it comes back after every reboot. Remove it with: sudo $INSTALL_DIR/lomiri-gestures.sh uninstall"
     ;;
 uninstall)
     need_root uninstall
-    systemctl disable lomiri-nav.service 2>/dev/null
+    systemctl disable lomiri-gestures.service 2>/dev/null
     rm -f "$BOOT_UNIT"; systemctl daemon-reload
     undo_mounts
     restart_shell
@@ -272,12 +309,13 @@ mode)
 status)
     if shell_mounted && ours; then echo "on"; else echo "off"; fi
     mountpoint -q "$PAGEHEADER" && echo "Back fix for UI toolkit apps: on"
-    mountpoint -q "$SETTINGS_PAGE" && echo "System Settings choice: on"
+    mountpoint -q "$SETTINGS_PAGE" && echo "System Settings choices: on"
+    systemctl is-active --quiet "$DT2W_UNIT" && echo "double tap to wake service: running ($(sh "$HERE/addons/dt2w" status))"
     [ -f "$BOOT_UNIT" ] && echo "installed (starts at boot)"
-    [ -f "$SETTINGS_FILE" ] && echo "settings: $(grep -E '^(mode|side|position)=' "$SETTINGS_FILE" | tr '\n' ' ')"
+    [ -r "$SETTINGS_FILE" ] && echo "settings: $(grep -vE '^\[|^$' "$SETTINGS_FILE" | tr '\n' ' ')"
     true
     ;;
 *)
-    sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
     exit 2 ;;
 esac

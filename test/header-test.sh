@@ -1,13 +1,13 @@
 #!/bin/sh
 # Runs headerback.qml as a real app window and presses Back (Alt+Left) three
 # times through a separate uinput device. Run as root, phone unlocked, with
-# lomiri-nav on (the PageHeader patch must be mounted).
+# the Gesture Pack on (the PageHeader patch must be mounted).
 # Expected: press 1 on page 4 (menu icon) does nothing; the app then pops page 4
 # itself; press 2 uses page 3's app-made back; press 3 the toolkit's back -> page 1.
 set -u
 HERE=$(cd "$(dirname "$0")" && pwd)
 U=phablet; UID_=$(id -u $U)
-T=$(mktemp -d /tmp/lomiri-nav-test.XXXXXX)
+T=$(mktemp -d /tmp/gesture-pack-test.XXXXXX)
 trap 'rm -rf "$T"' EXIT
 cp "$HERE/headerback.qml" "$T/"; chmod -R a+rX,go-w "$T"
 runuser -u $U -- env XDG_RUNTIME_DIR=/run/user/$UID_ MIR_SOCKET=/run/user/$UID_/mir_socket \

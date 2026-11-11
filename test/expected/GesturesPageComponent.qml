@@ -23,7 +23,7 @@ import Lomiri.Settings.Menus 0.1 as Menus
 import Lomiri.Settings.Components 0.1 as LSC
 import Lomiri.SystemSettings.Gestures 1.0
 import GSettings 1.0
-import Qt.labs.settings 1.1 as LomiriNavLabs
+import Qt.labs.settings 1.1 as GesturePackLabs
 
 ItemPage {
     id: root
@@ -183,11 +183,16 @@ ItemPage {
                 wrapMode: Text.WordWrap
             }
 
-            // LomiriNav: floating navigation (goals/lomiri-nav). One style at a time.
-            LomiriNavLabs.Settings {
-                id: navSettings
-                fileName: "/home/phablet/.config/lomiri-nav/settings.conf"
+            // Gesture Pack (github.com/juujbyg/lomiri-gestures)
+            GesturePackLabs.Settings {
+                id: packSettings
+                fileName: "/home/phablet/.config/lomiri-gesture-pack/settings.conf"
                 property string mode: "button"
+                property bool barScreenshot: true
+                property bool gestures: true
+                property bool swipeScreenshot: true
+                property bool doubleTapWake: false
+                property bool lockButtons: true
             }
 
             ListItem.Standard {
@@ -215,8 +220,8 @@ ItemPage {
                     i18n.tr("Back button"),
                     i18n.tr("Back, Home and Apps")
                 ]
-                selectedIndex: Math.max(0, modes.indexOf(navSettings.mode))
-                onDelegateClicked: navSettings.mode = modes[index]
+                selectedIndex: Math.max(0, modes.indexOf(packSettings.mode))
+                onDelegateClicked: packSettings.mode = modes[index]
             }
 
             Label {
@@ -227,8 +232,132 @@ ItemPage {
                     rightMargin: units.gu(2)
                     topMargin: units.gu(1)
                 }
-                text: i18n.tr("Floating navigation over apps, in thumb reach. Drag it to move it; press and hold it to switch style or hide it.")
+                text: i18n.tr("Floating navigation over apps, in thumb reach. Drag it to move it; press and hold it to take a screenshot, switch style or hide it.")
                 wrapMode: Text.WordWrap
+            }
+
+            SettingsListItems.Standard {
+                id: packBarScreenshotRow
+                text: i18n.tr("Screenshot button on the bar")
+                visible: packSettings.mode === "bar"
+                Switch {
+                    objectName: "packBarScreenshot"
+                    property bool serverChecked: packSettings.barScreenshot
+                    onServerCheckedChanged: checked = serverChecked
+                    Component.onCompleted: checked = serverChecked
+                    onTriggered: packSettings.barScreenshot = checked
+                }
+                showDivider: false
+            }
+
+            Label {
+                anchors {
+                    left: parent.left
+                    right: parent.right
+                    leftMargin: units.gu(2)
+                    rightMargin: units.gu(2)
+                }
+                text: i18n.tr("Adds a fourth button to Back, Home and Apps.")
+                wrapMode: Text.WordWrap
+                visible: packBarScreenshotRow.visible
+                opacity: packBarScreenshotRow.enabled ? 1 : 0.5
+            }
+
+            ListItem.Standard {
+                height: units.gu(2)
+                showDivider: true
+            }
+
+            SettingsItemTitle {
+                text: i18n.tr("Three-finger gestures")
+            }
+
+            SettingsListItems.Standard {
+                id: packGesturesRow
+                text: i18n.tr("Swipe with three fingers")
+                Switch {
+                    objectName: "packGestures"
+                    property bool serverChecked: packSettings.gestures
+                    onServerCheckedChanged: checked = serverChecked
+                    Component.onCompleted: checked = serverChecked
+                    onTriggered: packSettings.gestures = checked
+                }
+                showDivider: false
+            }
+
+            Label {
+                anchors {
+                    left: parent.left
+                    right: parent.right
+                    leftMargin: units.gu(2)
+                    rightMargin: units.gu(2)
+                }
+                text: i18n.tr("Left or right switches between open apps, up opens the app switcher and down closes it. One and two fingers stay with the app.")
+                wrapMode: Text.WordWrap
+                visible: packGesturesRow.visible
+                opacity: packGesturesRow.enabled ? 1 : 0.5
+            }
+
+            SettingsListItems.Standard {
+                id: packSwipeScreenshotRow
+                text: i18n.tr("Three fingers down for a screenshot")
+                enabled: packSettings.gestures
+                Switch {
+                    objectName: "packSwipeScreenshot"
+                    property bool serverChecked: packSettings.swipeScreenshot
+                    onServerCheckedChanged: checked = serverChecked
+                    Component.onCompleted: checked = serverChecked
+                    onTriggered: packSettings.swipeScreenshot = checked
+                }
+                showDivider: false
+            }
+
+            Label {
+                anchors {
+                    left: parent.left
+                    right: parent.right
+                    leftMargin: units.gu(2)
+                    rightMargin: units.gu(2)
+                }
+                text: i18n.tr("Swipe down with three fingers in an app to take a screenshot.")
+                wrapMode: Text.WordWrap
+                visible: packSwipeScreenshotRow.visible
+                opacity: packSwipeScreenshotRow.enabled ? 1 : 0.5
+            }
+
+            ListItem.Standard {
+                height: units.gu(2)
+                showDivider: true
+            }
+
+            SettingsItemTitle {
+                text: i18n.tr("Lock screen")
+            }
+
+            SettingsListItems.Standard {
+                id: packLockButtonsRow
+                text: i18n.tr("Camera and flashlight")
+                Switch {
+                    objectName: "packLockButtons"
+                    property bool serverChecked: packSettings.lockButtons
+                    onServerCheckedChanged: checked = serverChecked
+                    Component.onCompleted: checked = serverChecked
+                    onTriggered: packSettings.lockButtons = checked
+                }
+                showDivider: false
+            }
+
+            Label {
+                anchors {
+                    left: parent.left
+                    right: parent.right
+                    leftMargin: units.gu(2)
+                    rightMargin: units.gu(2)
+                }
+                text: i18n.tr("Press and hold the bottom corners of the lock screen: the camera on the left (it opens once you unlock), the flashlight on the right.")
+                wrapMode: Text.WordWrap
+                visible: packLockButtonsRow.visible
+                opacity: packLockButtonsRow.enabled ? 1 : 0.5
             }
         }
     }

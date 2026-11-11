@@ -1,0 +1,160 @@
+#!/bin/sh
+# Gesture Pack add-on: double tap to wake, for phones whose Synaptics DSX touch
+# panel has a wake_gesture switch (the Pixel 3a and 3a XL, for example), without
+# the dead touchscreen it otherwise causes. Run as root.
+#
+#   dt2w supported   exit 0 if this phone has the switch
+#   dt2w status      show the panel's setting
+#   dt2w disarm      turn it off now (refuses while the screen is off)
+#   dt2w watch       what the Gesture Pack runs: follow the user's setting
+#                    (doubleTapWake in the settings file), and after every
+#                    screen-on reset the panel to normal mode
+#
+# Why the reset: with wake_gesture at 1, screen-off puts the panel in gesture
+# mode and screen-on is meant to switch it back. Sometimes it doesn't, and the
+# screen comes on with touch dead (no interrupts at all). Waking through the
+# driver's normal path fixes it: wake_gesture 0, then its suspend switch 1 and
+# 0, which releases the touch bus to the SLPI and takes it back. So that is
+# done at every screen-on, and wake_gesture goes back to 1 for the next
+# screen-off if the user wants double tap.
+#
+# wake_gesture is only ever changed while the screen is on. Changing it while
+# the screen is off leaves the driver without the touch bus at the next wake.
+
+set -u
+
+TAG=gesture-pack-dt2w
+USER_NAME=${GESTURE_PACK_USER:-phablet}
+SETTINGS=${GESTURE_PACK_SETTINGS:-/home/$USER_NAME/.config/lomiri-gesture-pack/settings.conf}
+LOCK=/run/gesture-pack-dt2w.lock
+
+log() { echo "$*"; logger -t "$TAG" "$*" 2>/dev/null || true; }
+
+find_node() {
+    find /sys/devices/platform/soc -maxdepth 6 -name wake_gesture -print -quit 2>/dev/null
+}
+
+screen_on() {
+    for b in /sys/class/backlight/*/brightness; do
+        [ "$(cat "$b" 2>/dev/null)" != 0 ]; return
+    done
+    return 1
+}
+
+blank_count() { dmesg 2>/dev/null | grep -c "DRM blank"; }
+
+# Last kernel line about the panel's power state or bus ownership.
+last_panel_line() {
+    dmesg 2>/dev/null | grep -E "DRM blank|bus access from SLPI" | tail -1
+}
+
+# True when the screen is on and the kernel holds the touch bus.
+safe_now() {
+    screen_on || return 1
+    case "$(last_panel_line)" in
+        "") return 0 ;;                          # log rolled over; screen is on
+        *"requesting bus access"*) return 0 ;;   # normal wake, bus is ours
+        *"DRM blank 0, event 1"*) return 0 ;;    # wake from gesture mode
+        *) return 1 ;;                           # screen going off, or bus with SLPI
+    esac
+}
+
+# Does the user want double tap? The settings file is in the user's home, so
+# it's read as the user (setpriv needs no PAM session, unlike runuser).
+wanted() {
+    uid=$(id -u "$USER_NAME") || return 1
+    setpriv --reuid="$uid" --regid="$(id -g "$USER_NAME")" --clear-groups \
+        cat "$SETTINGS" 2>/dev/null | tr -d '\r' | grep -qx 'doubleTapWake=true'
+}
+
+# Bring the panel back to normal reporting, then arm double tap if wanted.
+# Called right after the screen comes on. Returns 1 if the screen went off
+# meanwhile; then wake_gesture is left at 0, which is consistent.
+reset_and_arm() {
+    node=$(find_node); [ -n "$node" ] || return 2
+    dir=$(dirname "$node")
+    mark=$(blank_count)
+    screen_on || return 1
+    if [ "$(cat "$node")" = 1 ]; then
+        echo 0 > "$node"
+        echo 1 > "$dir/suspend"
+        echo 0 > "$dir/suspend"
+    fi
+    wanted || return 0
+    # Arm only if the screen stayed on the whole time.
+    if screen_on && [ "$(blank_count)" = "$mark" ]; then
+        echo 1 > "$node"
+        return 0
+    fi
+    return 1
+}
+
+# The setting changed while the screen is on and touch works: just set it.
+follow_setting() {
+    node=$(find_node); [ -n "$node" ] || return 2
+    v=0; wanted && v=1
+    [ "$(cat "$node")" = "$v" ] && return 0
+    safe_now || return 1
+    echo "$v" > "$node"
+    log "double tap to wake: $([ "$v" = 1 ] && echo on || echo off)"
+}
+
+locked() { flock "$LOCK" /bin/sh "$0" "$@"; }   # /run is noexec: run it through sh
+
+case "${1:-}" in
+  supported)
+    [ -n "$(find_node)" ]
+    ;;
+
+  status)
+    node=$(find_node)
+    if [ -z "$node" ]; then echo "double tap to wake: unsupported"
+    elif [ "$(cat "$node")" = 1 ]; then echo "double tap to wake: on"
+    else echo "double tap to wake: off"; fi
+    ;;
+
+  disarm)
+    [ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 1; }
+    node=$(find_node); [ -n "$node" ] || exit 0
+    [ "$(cat "$node")" = 0 ] && exit 0
+    if ! safe_now; then
+        echo "The screen is off; double tap stays on until the next screen-on." >&2
+        exit 1
+    fi
+    echo 0 > "$node"
+    ;;
+
+  _reset) reset_and_arm ;;
+  _follow) follow_setting ;;
+
+  watch)
+    [ "$(id -u)" -eq 0 ] || { echo "run as root" >&2; exit 1; }
+    [ -n "$(find_node)" ] || { log "no wake_gesture switch on this phone"; exit 2; }
+    if safe_now; then locked _follow; fi
+    # Follow the setting while the screen is on: a cheap mtime check every 3 s.
+    (
+        last=$(stat -c %Y "$SETTINGS" 2>/dev/null)
+        while sleep 3; do
+            screen_on || continue
+            now=$(stat -c %Y "$SETTINGS" 2>/dev/null)
+            [ "$now" = "$last" ] && continue
+            last=$now
+            locked _follow
+        done
+    ) &
+    # -W follows only new kernel messages. The driver logs this line when the
+    # screen has come on.
+    dmesg -W | grep --line-buffered -F "DRM blank 0, event 1" | while IFS= read -r _; do
+        sleep 0.2   # let the driver finish its own resume first
+        locked _reset || log "screen went off during reset; double tap stays off until next screen-on"
+    done
+    log "kernel log stream ended"
+    kill $! 2>/dev/null
+    exit 1
+    ;;
+
+  *)
+    sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+    exit 2
+    ;;
+esac
