@@ -6,7 +6,7 @@
 // so udev doesn't tag it ID_INPUT_KEYBOARD and Lomiri doesn't count it as a
 // hardware keyboard (which would hide the on-screen keyboard).
 //
-// QML (with QML2_IMPORT_PATH=~/.local/share/lomiri-nav):  import LomiriNav 1.0
+// QML (with QML2_IMPORT_PATH set to the folder holding LomiriNav/):  import LomiriNav 1.0
 //       NavKeys.back()     Alt+Left, the Back shortcut (StandardKey.Back)
 //       NavKeys.apps()     Super+W, Lomiri's app spread
 //       NavKeys.mode       "off", "button" (floating back button) or "bar" (Back, Home, Apps)

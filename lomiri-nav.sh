@@ -15,7 +15,9 @@
 #  - the UI toolkit's PageHeader.qml learns the Back shortcut (Alt+Left),
 #  - System Settings > Gestures gets the Navigation choice.
 # A part whose file doesn't look as expected is left out. The LomiriNav QML
-# plugin, which presses the keys, goes to ~phablet/.local/share/lomiri-nav.
+# plugin, which presses the keys, goes to a small root-owned tmpfs in /run
+# (/run itself is noexec). As root, this never writes in the user's home: the
+# settings file is written as the user.
 set -u
 
 HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
@@ -29,9 +31,9 @@ SETTINGS_PAGE=/usr/share/lomiri-system-settings/qml-plugins/gestures/PageCompone
 USER_NAME=phablet
 USER_HOME=/home/$USER_NAME
 UNIT=lomiri-full-greeter.service
-PLUGIN_HOME=$USER_HOME/.local/share/lomiri-nav
+LIB=$RUN-lib                      # tmpfs mounted without noexec, for the plugin
 SETTINGS_FILE=$USER_HOME/.config/lomiri-nav/settings.conf
-DROPIN_DIR=$USER_HOME/.config/systemd/user/$UNIT.d
+DROPIN_DIR=/run/systemd/user/$UNIT.d
 
 uid() { id -u "$USER_NAME"; }
 
@@ -95,8 +97,11 @@ undo_mounts() {
     for f in "$PAGEHEADER" "$SETTINGS_PAGE"; do
         if mountpoint -q "$f" && findmnt -n -o SOURCE "$f" | grep -q lomiri-nav; then umount "$f"; fi
     done
-    rm -rf "$RUN" "$DROPIN_DIR"
-    rmdir "$USER_HOME/.config/systemd/user" "$USER_HOME/.config/systemd" 2>/dev/null
+    rm -f "$DROPIN_DIR/lomiri-nav.conf"; rmdir "$DROPIN_DIR" 2>/dev/null
+    rm -rf "$RUN"
+    # The running shell may still map the plugin: detach now, freed when it exits.
+    if mountpoint -q "$LIB"; then umount "$LIB" 2>/dev/null || umount -l "$LIB"; fi
+    rmdir "$LIB" 2>/dev/null
     true
 }
 
@@ -110,10 +115,15 @@ mount_all() {
     [ -f "$HERE/LomiriNav/libLomiriNav.so" ] || { echo "Missing $HERE/LomiriNav/libLomiriNav.so" >&2; return 1; }
     rm -rf "$RUN"; mkdir -p "$RUN"
 
-    # The plugin, root-owned, so the shell only loads what root put there.
-    mkdir -p "$PLUGIN_HOME/LomiriNav"
-    cp "$HERE/LomiriNav/libLomiriNav.so" "$HERE/LomiriNav/qmldir" "$PLUGIN_HOME/LomiriNav/"
-    chown -R root:root "$PLUGIN_HOME"; chmod -R a+rX,go-w "$PLUGIN_HOME"
+    # The plugin, on its own root-owned tmpfs, so the shell only loads what
+    # root put there. /run is noexec, which would stop the library loading.
+    if mountpoint -q "$LIB"; then umount "$LIB" 2>/dev/null || umount -l "$LIB"; fi
+    mkdir -p "$LIB"
+    mount -t tmpfs -o mode=0755,size=4m,nosuid,nodev lomiri-nav-lib "$LIB" || { undo_mounts; return 1; }
+    mkdir "$LIB/LomiriNav"
+    cp "$HERE/LomiriNav/libLomiriNav.so" "$HERE/LomiriNav/qmldir" "$LIB/LomiriNav/"
+    chmod -R a+rX,go-w "$LIB"
+    mount -o remount,ro,nosuid,nodev "$LIB" 2>/dev/null
 
     # The shell. Without this part nothing works, so a failure stops here.
     cp -a "$TARGET" "$COPY" || { undo_mounts; return 1; }
@@ -150,10 +160,11 @@ mount_all() {
         echo "System Settings' Gestures page has changed; use '$0 mode' instead." >&2
     fi
 
-    # Only the shell gets the plugin's import path.
+    # Only the shell gets the plugin's import path. /run/systemd/user is in the
+    # user manager's search path, root-owned, and gone at reboot.
     mkdir -p "$DROPIN_DIR"
-    printf '[Service]\nEnvironment=QML2_IMPORT_PATH=%s\n' "$PLUGIN_HOME" > "$DROPIN_DIR/lomiri-nav.conf"
-    chown -R "$USER_NAME": "$USER_HOME/.config/systemd"
+    printf '[Service]\nEnvironment=QML2_IMPORT_PATH=%s\n' "$LIB" > "$DROPIN_DIR/lomiri-nav.conf"
+    chmod 644 "$DROPIN_DIR/lomiri-nav.conf"
     return 0
 }
 
@@ -177,16 +188,25 @@ restart_and_check() {
     fi
 }
 
-set_mode() {
-    case "$1" in off|button|bar) ;; *) echo "mode is off, button or bar" >&2; exit 2 ;; esac
-    local f=$SETTINGS_FILE
-    mkdir -p "$(dirname "$f")"
-    [ -f "$f" ] || printf '[General]\n' > "$f"
+# Writes the style into the settings file. Runs as the phone's user.
+write_mode() {
+    local f=$2
+    mkdir -p "$(dirname "$f")" || return 1
+    [ -f "$f" ] || printf '[General]\n' > "$f" || return 1
     # sed -i replaces the file, which the shell's plugin notices.
     if grep -q '^mode=' "$f"; then sed -i "s/^mode=.*/mode=$1/" "$f"
     else sed -i "s/^\[General\]$/[General]\nmode=$1/" "$f"; fi
     sed -i '/^enabled=/d' "$f"
-    [ "$(id -u)" = 0 ] && chown -R "$USER_NAME": "$(dirname "$f")"
+}
+
+set_mode() {
+    case "$1" in off|button|bar) ;; *) echo "mode is off, button or bar" >&2; exit 2 ;; esac
+    if [ "$(id -u)" = 0 ]; then
+        # Root never writes in the user's home: do it as the user.
+        runuser -u "$USER_NAME" -- bash -c "$(declare -f write_mode)"'; write_mode "$1" "$2"' _ "$1" "$SETTINGS_FILE" || exit 1
+    else
+        write_mode "$1" "$SETTINGS_FILE" || exit 1
+    fi
     echo "mode: $1"
 }
 
@@ -243,7 +263,7 @@ uninstall)
     rm -f "$BOOT_UNIT"; systemctl daemon-reload
     undo_mounts
     restart_shell
-    rm -rf "$PLUGIN_HOME" "$(dirname "$SETTINGS_FILE")"
+    runuser -u "$USER_NAME" -- rm -rf "$(dirname "$SETTINGS_FILE")"
     [ -d "$INSTALL_DIR" ] && echo "Removed. Its files are still in $INSTALL_DIR; delete them with: sudo rm -r $INSTALL_DIR"
     ;;
 mode)

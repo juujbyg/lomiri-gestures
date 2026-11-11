@@ -59,6 +59,8 @@ Safety:
 - After `on`, the new shell's log is checked, and the stock shell comes back by itself if it shows an error.
 - The overlay sits behind a `Loader`, so even a broken overlay can't break the shell.
 
+The plugin goes on a small root-owned tmpfs at `/run/lomiri-nav-lib`, and a drop-in in `/run/systemd/user` gives only the shell its import path. Running as root, the script never writes in your home folder: the settings file is written as your user.
+
 The settings (style, side, height) are in `~/.config/lomiri-nav/settings.conf`. The plugin watches that file, so changes show at once.
 
 `install` copies the files to `/root/lomiri-nav` and adds `lomiri-nav.service`, which mounts everything at boot before the shell starts.
