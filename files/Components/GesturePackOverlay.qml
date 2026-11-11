@@ -160,7 +160,7 @@ Item {
             Repeater {
                 model: [
                     { text: i18n.tr("Take screenshot"), action: "screenshot" },
-                    { text: root.isBar ? i18n.tr("Use a back button instead") : i18n.tr("Use Back, Home and Apps instead"),
+                    { text: root.isBar ? i18n.tr("Switch to the round button") : i18n.tr("Switch to the bar"),
                       action: root.isBar ? "button" : "bar" },
                     { text: i18n.tr("Hide navigation"), action: "off" },
                     { text: i18n.tr("Cancel"), action: "cancel" }

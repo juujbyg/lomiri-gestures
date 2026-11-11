@@ -20,6 +20,12 @@ Navigation in thumb reach, gestures and screenshots for Ubuntu Touch. Everything
 
 It's unofficial and needs root (`sudo`). It never writes to the read-only system: everything is mounted from `/run`, so a reboot (if not made permanent) or `off` gives you the stock shell back.
 
+## Screenshots
+
+| Back, Home, Apps and Screenshot bar | The choices in System Settings, with the round Back button | Camera and flashlight on the lock screen |
+|---|---|---|
+| <img src="docs/screenshots/bar.png" width="260" alt="System Settings with the floating Back, Home, Apps and Screenshot bar at the bottom"> | <img src="docs/screenshots/settings.png" width="260" alt="System Settings, Gestures: three-finger gestures, lock screen and double tap to wake switches, with the round Back button"> | <img src="docs/screenshots/lock-screen.png" width="260" alt="The lock screen with a camera button in the bottom-left corner and a flashlight button in the bottom-right"> |
+
 ## Try it
 
 You need Ubuntu Touch 24.04 on an arm64 phone, with Developer Mode on and a password set (for `sudo`).

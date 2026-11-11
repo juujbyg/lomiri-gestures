@@ -1,8 +1,9 @@
 #!/usr/bin/python3 -I
 """A virtual touchscreen for tests on the phone (run as root). One finger:
 
-    touch.py hold X Y MS     press at X,Y (screen pixels), hold MS milliseconds, lift
+    touch.py hold X Y MS            press at X,Y (screen pixels), hold MS milliseconds, lift
     touch.py tap X Y
+    touch.py swipe X1 Y1 X2 Y2 MS   move from X1,Y1 to X2,Y2 over MS milliseconds
 
 The device covers the screen (1080x2160 by default, or W and H in the
 environment) and is removed when the script ends.
@@ -30,7 +31,11 @@ def abs_setup(fd, code, maximum):
 
 def main():
     cmd, x, y = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
-    ms = int(sys.argv[4]) if cmd == "hold" else 60
+    x2, y2 = x, y
+    if cmd == "swipe":
+        x2, y2, ms = int(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6])
+    else:
+        ms = int(sys.argv[4]) if cmd == "hold" else 60
     fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
     fcntl.ioctl(fd, UI_SET_EVBIT, EV_KEY)
     fcntl.ioctl(fd, UI_SET_KEYBIT, BTN_TOUCH)
@@ -51,10 +56,15 @@ def main():
         ev(fd, EV_KEY, BTN_TOUCH, 1); ev(fd, EV_ABS, ABS_X, x); ev(fd, EV_ABS, ABS_Y, y)
         ev(fd, EV_SYN, 0, 0)
         print(f"TOUCH down {x},{y} at {time.strftime('%T')}", flush=True)
-        end = time.time() + ms / 1000
-        while time.time() < end:        # a resting finger still reports now and then
-            time.sleep(0.05)
-            ev(fd, EV_ABS, ABS_MT_X, x); ev(fd, EV_SYN, 0, 0)
+        start = time.time()
+        while True:                     # a resting finger still reports now and then
+            time.sleep(0.016)
+            f = min(1.0, (time.time() - start) / (ms / 1000))
+            cx, cy = round(x + (x2 - x) * f), round(y + (y2 - y) * f)
+            ev(fd, EV_ABS, ABS_MT_X, cx); ev(fd, EV_ABS, ABS_MT_Y, cy)
+            ev(fd, EV_ABS, ABS_X, cx); ev(fd, EV_ABS, ABS_Y, cy); ev(fd, EV_SYN, 0, 0)
+            if f >= 1.0:
+                break
         ev(fd, EV_ABS, ABS_MT_ID, -1); ev(fd, EV_KEY, BTN_TOUCH, 0); ev(fd, EV_SYN, 0, 0)
         print(f"TOUCH up after {ms} ms", flush=True)
         time.sleep(0.5)
